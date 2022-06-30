@@ -12,7 +12,8 @@ import { configPath } from "../utils/path";
 
 export let izzyProcess!: ChildProcess;
 
-export const izzyPath = configPath(type() === "Windows_NT" ? "izzy.exe" : "izzy");
+export const izzyPath =
+  process.env.IZZY_PATH || configPath(type() === "Windows_NT" ? "izzy.exe" : "izzy");
 
 export async function deleteIzzy(): Promise<void> {
   logger.verbose("Deleting izzy");
@@ -52,45 +53,43 @@ export async function izzyVersion(): Promise<string> {
   return res.data.version;
 }
 
-interface IGithubAsset {
-  // eslint-disable-next-line camelcase
-  browser_download_url: string;
-  name: string;
-}
+const URL = process.env.IZZY_URL || "https://gitlab.com/api/v4/projects/31639446/releases";
 
 async function downloadIzzy() {
-  logger.verbose("Fetching Izzy releases...");
-  const releaseUrl = `https://api.github.com/repos/boi123212321/izzy/releases/latest`;
-
-  const releaseInfo = (
-    await Axios.get<{
-      id: string;
-    }>(releaseUrl)
-  ).data;
-  const releaseId = releaseInfo.id;
-
-  const assetsUrl = `https://api.github.com/repos/boi123212321/izzy/releases/${releaseId}/assets`;
-
-  const assets = (await Axios.get(assetsUrl)).data as IGithubAsset[];
+  const _type = type();
+  const _arch = arch();
 
   const downloadName = {
     Windows_NT: "izzy.exe",
     Linux: "izzy_linux",
     Darwin: "izzy_mac",
-  }[type()] as string;
+  }[_type] as string;
 
-  if (arch() !== "x64") {
-    throw new Error(`Unsupported architecture ${arch()}`);
+  if (_arch !== "x64") {
+    throw new Error(`Unsupported architecture ${_arch}`);
   }
 
-  const asset = assets.find((as) => as.name === downloadName);
+  logger.verbose("Fetching Izzy releases...");
+  const { data: releases } = await Axios.get<
+    {
+      assets: {
+        links: { name: string; url: string }[];
+      };
+    }[]
+  >(URL);
+  const latest = releases[0];
+  logger.silly(latest);
+
+  const asset = latest?.assets.links.find(
+    (as) => as.name.includes(downloadName) && as.name.includes(_arch)
+  );
 
   if (!asset) {
-    throw new Error(`Izzy release not found: ${downloadName} for ${type()}`);
+    throw new Error(`Izzy release not found: ${downloadName} for ${_type} ${_arch}`);
   }
 
   // eslint-disable-next-line camelcase
-  await downloadFile(asset.browser_download_url, izzyPath);
+  await downloadFile(asset.url, izzyPath);
 }
 
 export async function ensureIzzyExists(): Promise<0 | 1> {
